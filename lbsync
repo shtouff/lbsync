@@ -29,7 +29,6 @@ if ($hostname eq 'comfw1') {
 }
 
 my $nginxdir = "/etc/nginx";
-my $swdir = "/etc/shorewall";
 my $kadir = "/etc/keepalived";
 
 my $lbsyncdir = "/home/lbsync/lbsync";
@@ -41,13 +40,10 @@ sub mainMenu
     while ($choice ne 'q' and $choice ne '0') {
 	$choice = $ui->menu( text => 'Votre choix:',
 			     list => [ 'k', 'Configurer keepalived (VRRP/LVS)',
-				       's', 'Configurer shorewall (Firewall)',
 				       'n', 'Configurer nginx (Proxy HTTP)',
 				       'q', 'Quitter',
 			     ]);
-	if ($choice eq 's') {
-	    &configureShorewallMenu;
-	} elsif ($choice eq 'k') {
+        if ($choice eq 'k') {
 	    &configureKeepAliveMenu;
 	} elsif ($choice eq 'n') {
 	    &configureNginxMenu;
@@ -126,43 +122,6 @@ sub editFilesMenu
 	    last;
 	}
 	system("$editor $choice");
-    }
-}
-
-sub configureShorewallMenu
-{
-    my $choice = -1;
-    while ($choice ne 'r' and $choice ne '0') {
-	$choice = $ui->menu( text => 'Votre choix:',
-			     list => [ 'd', 'Montrer les differences local/distant',
-				       's1', 'Synchroniser local ==> distant',
-				       's2', 'Synchroniser local <== distant',
-				       'ed', 'Editer conf',
-				       'rl', 'Relancer shorewall (local)',
-				       'rd', 'Relancer shorewall (distant)',
-				       'r', 'Retour',
-			     ]);
-	if ($choice eq 'ed') {
-	    &editFilesMenu($swdir);
-	} elsif ($choice eq 's2') {
-	    system("rsync -avc --delete $rhost:${swdir}/ ${swdir}/");
-	} elsif ($choice eq 's1') {
-	    system("rsync -avc --delete ${swdir}/ $rhost:${swdir}/");
-	} elsif ($choice eq 'rl') {
-	    system("sudo /sbin/shorewall safe-restart");
-	} elsif ($choice eq 'rd') {
-	    system("ssh $rhost sudo /sbin/shorewall safe-restart");
-	} elsif ($choice eq 'd') {
-	    rmtree("${lbsyncdir}/shorewall");
-	    mkpath("${lbsyncdir}/shorewall");
-	    system("rsync -av $rhost:${swdir}/ ${lbsyncdir}/shorewall/");
-	    system("diff -Nru ${swdir} ${lbsyncdir}/shorewall > ${lbsyncdir}/diff.shorewall");
-	    if ( ($? >> 8) == 0) {
-		$ui->msgbox(text=>'aucune différence trouvée');
-	    } else {
-		$ui->textbox(path=>"${lbsyncdir}/diff.shorewall");
-	    }
-	}
     }
 }
 
