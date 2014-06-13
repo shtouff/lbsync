@@ -30,6 +30,7 @@ if ($hostname eq 'comfw1') {
 
 my $nginxdir = "/etc/nginx";
 my $kadir = "/etc/keepalived";
+my $varnishdir = "/etc/varnish";
 
 my $lbsyncdir = "/home/lbsync/lbsync";
 my $lbsynclog = "${lbsyncdir}/lbsync.log";
@@ -40,11 +41,14 @@ sub mainMenu
     while ($choice ne 'q' and $choice ne '0') {
 	$choice = $ui->menu( text => 'Votre choix:',
 			     list => [ 'k', 'Configurer keepalived (VRRP/LVS)',
-				       'n', 'Configurer nginx (Proxy HTTP)',
+				       'n', 'Configurer nginx (LB HTTP)',
+				       'v', 'Configurer varnish (Reverse Proxy HTTP)',
 				       'q', 'Quitter',
 			     ]);
         if ($choice eq 'k') {
 	    &configureKeepAliveMenu;
+        } elsif ($choice eq 'v') {
+            &configureVarnishMenu;
 	} elsif ($choice eq 'n') {
 	    &configureNginxMenu;
 	}
@@ -122,6 +126,81 @@ sub editFilesMenu
 	    last;
 	}
 	system("$editor $choice");
+    }
+}
+
+sub configureVarnishMenu
+{
+    my $choice = -1;
+    while ($choice ne 'r' and $choice ne '0') {
+	$choice = $ui->menu( text => 'Votre choix:',
+			     list => [ 'd', 'Montrer les differences local/distant',
+				       's1', 'Synchroniser local ==> distant',
+				       's2', 'Synchroniser local <== distant',
+				       'ed', 'Editer conf',
+				       'rl', 'Relancer varnish (local)',
+				       'rd', 'Relancer varnish (distant)',
+				       'r', 'Retour',
+			     ]);
+	if ($choice eq 'ed') {
+	    &editFilesMenu($varnishdir);
+	} elsif ($choice eq 's2') {
+	    system("rsync -avc --delete $rhost:${varnishdir}/ ${varnishdir}/");
+	} elsif ($choice eq 's1') {
+	    system("rsync -avc --delete ${varnishdir}/ $rhost:${varnishdir}/");
+	} elsif ($choice eq 'rl') {
+	    my $varnishhash = `find ${varnishdir} -name \*.vcl | xargs md5sum | sort | md5sum | cut -f1 -d' '`;
+	    chomp($varnishhash);
+#	    $ui->msgbox(title => "DEBUG",
+#			 text => "[${varnishhash}]");
+
+	    system("sudo /usr/bin/varnishadm vcl.load lbsync-${varnishhash} ${varnishdir}/default.vcl >${lbsynclog} 2>&1");
+	    if ( ($? >> 8) != 0) {
+		$ui->textbox(title => "Erreur loading new VCL",
+			     path=>$lbsynclog); 
+		next;
+	    }
+
+	    system("sudo /usr/bin/varnishadm vcl.use lbsync-${varnishhash} >${lbsynclog} 2>&1");
+	    if ( ($? >> 8) != 0) {
+		$ui->textbox(title => "Erreur using new VCL",
+			     path=>$lbsynclog); 
+		next;
+	    }
+ 
+	    $ui->msgbox(title => "Info",
+			text => "Config OK, varnish relancé.");	
+	} elsif ($choice eq 'rd') {
+	    my $varnishhash = `ssh $rhost find ${varnishdir} -name \*.vcl | ssh $rhost xargs md5sum | sort | md5sum | cut -f1 -d' '`;
+	    chomp($varnishhash);
+
+	    system("ssh $rhost sudo /usr/bin/varnishadm vcl.load lbsync-${varnishhash} ${varnishdir}/default.vcl >${lbsynclog} 2>&1");
+	    if ( ($? >> 8) != 0) {
+		$ui->textbox(title => "Erreur loading new VCL",
+			     path=>$lbsynclog); 
+		next;
+	    }
+
+	    system("ssh $rhost sudo /usr/bin/varnishadm vcl.use lbsync-${varnishhash} >${lbsynclog} 2>&1");
+	    if ( ($? >> 8) != 0) {
+		$ui->textbox(title => "Erreur using new VCL",
+			     path=>$lbsynclog); 
+		next;
+	    }
+ 
+	    $ui->msgbox(title => "Info",
+			text => "Config OK, varnish relancé.");	
+	} elsif ($choice eq 'd') {
+	    rmtree("${lbsyncdir}/varnish");
+	    mkpath("${lbsyncdir}/varnish");
+	    system("rsync -av $rhost:${varnishdir}/ ${lbsyncdir}/varnish/");
+	    system("diff -Nru ${varnishdir} ${lbsyncdir}/varnish > ${lbsyncdir}/diff.varnish 2>&1");
+	    if ( ($? >> 8) == 0) {
+		$ui->msgbox(text=>'aucune différence trouvée.');
+	    } else {
+		$ui->textbox(path=>"${lbsyncdir}/diff.varnish");
+	    }
+	}
     }
 }
 
