@@ -5,6 +5,8 @@ use UI::Dialog;
 use Sys::Hostname;
 use File::Temp qw/ tempfile tempdir /;
 use File::Path;
+use Term::ReadKey;
+my ($wchar, $hchar, $wpixels, $hpixels) = GetTerminalSize();
 
 my $editor = 'vi';
 if (exists($ENV{EDITOR})) {
@@ -14,10 +16,10 @@ if (exists($ENV{EDITOR})) {
 }
 
 my $hostname = hostname;
-
 my $ui = new UI::Dialog(backtitle => 'Comuto LB config & sync',
-			title=>$hostname,
-			height=>20, listheight=>12);
+			width=>$wchar-4, height=>$hchar-4, 
+			listheight=>$hchar-11,
+			title=>$hostname);
 
 my ($lhost, $rhost);
 if ($hostname eq 'comfw1') {
