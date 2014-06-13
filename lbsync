@@ -1,0 +1,269 @@
+#!/usr/bin/perl -w 
+
+use strict;
+use UI::Dialog;
+use Sys::Hostname;
+use File::Temp qw/ tempfile tempdir /;
+use File::Path;
+
+my $editor = 'vi';
+if (exists($ENV{EDITOR})) {
+    if ($ENV{EDITOR} ne '') {
+	$editor = $ENV{EDITOR};
+    }
+}
+
+my $hostname = hostname;
+
+my $ui = new UI::Dialog(backtitle => 'Comuto LB config & sync',
+			title=>$hostname,
+			height=>20, listheight=>12);
+
+my ($lhost, $rhost);
+if ($hostname eq 'comfw1') {
+    $lhost = '10.11.1.1';
+    $rhost = '10.11.1.2';
+} else {
+    $lhost = '10.11.1.2';
+    $rhost = '10.11.1.1';
+}
+
+my $nginxdir = "/etc/nginx";
+my $swdir = "/etc/shorewall";
+my $kadir = "/etc/keepalived";
+
+my $lbsyncdir = "/home/lbsync/lbsync";
+my $lbsynclog = "${lbsyncdir}/lbsync.log";
+
+sub mainMenu
+{
+    my $choice = -1;
+    while ($choice ne 'q' and $choice ne '0') {
+	$choice = $ui->menu( text => 'Votre choix:',
+			     list => [ 'k', 'Configurer keepalived (VRRP/LVS)',
+				       's', 'Configurer shorewall (Firewall)',
+				       'n', 'Configurer nginx (Proxy HTTP)',
+				       'q', 'Quitter',
+			     ]);
+	if ($choice eq 's') {
+	    &configureShorewallMenu;
+	} elsif ($choice eq 'k') {
+	    &configureKeepAliveMenu;
+	} elsif ($choice eq 'n') {
+	    &configureNginxMenu;
+	}
+    }
+}
+
+sub configureKeepAliveMenu
+{
+    my $choice = -1;
+    while ($choice ne 'r' and $choice ne '0') {
+	
+	$choice = $ui->menu( text => 'Votre choix:',
+			     list => [ 'd', 'Montrer les différences local / distant',
+				       's1', 'Synchroniser local ==> distant',
+				       's2', 'Synchroniser local <== distant',
+				       'e', 'Editer keepalived.conf',
+				       'rl', 'Relancer keepalived (local)',
+				       'rd', 'Relancer keepalived (distant)',
+				       'r', 'Retour',
+			     ]);
+	if ($choice eq 'e') {
+	    system("$editor ${kadir}/keepalived.m4");
+	    system("m4 -I ${kadir} make-kaconf.m4 > ${kadir}/keepalived.conf");
+	} elsif ($choice eq 'rl') {
+	    system("m4 -I ${kadir} make-kaconf.m4 > ${kadir}/keepalived.conf");
+	    system("sudo /etc/init.d/keepalived reload > ${lbsynclog} 2>&1");
+	    if ( ($? >> 8) == 0) {
+		$ui->msgbox(title => "Info",
+			    text => "Keepalived relancé.");	
+	    } else {
+		$ui->textbox(title => "Erreur",
+			     path=>$lbsynclog);	
+	    }
+	} elsif ($choice eq 'rd') {
+	    system("rsync -avc ${kadir}/keepalived.m4 $rhost:${kadir}/keepalived.m4");
+            system("ssh $rhost 'm4 -I ${kadir} make-kaconf.m4 > ${kadir}/keepalived.conf'");
+	    system("ssh $rhost sudo /etc/init.d/keepalived reload > ${lbsynclog} 2>&1");
+	    if ( ($? >> 8) == 0) {
+		$ui->msgbox(title => "Info",
+			    text => "Keepalived relancé sur ${rhost}.");	
+	    } else {
+		$ui->textbox(title => "Erreur",
+			     path=>$lbsynclog);	
+	    }
+	    
+
+	} elsif ($choice eq 's1') {
+	    system("rsync -avc ${kadir}/keepalived.m4 $rhost:${kadir}/keepalived.m4");
+	} elsif ($choice eq 's2') {
+	    system("rsync -avc $rhost:${kadir}/keepalived.m4 ${kadir}/keepalived.m4");
+	} elsif ($choice eq 'd') {
+	    rmtree("${lbsyncdir}/keepalived");
+	    mkpath("${lbsyncdir}/keepalived");
+	    system("rsync -av $rhost:${kadir}/keepalived.m4 ${lbsyncdir}/keepalived/keepalived.conf.$rhost");
+	    system("diff -Nru ${kadir}/keepalived.m4 ${lbsyncdir}/keepalived/keepalived.conf.$rhost > ${lbsyncdir}/diff.keepalived");
+	    if ( ($? >> 8) == 0) {
+		$ui->msgbox(text=>'aucune différence trouvée');
+	    } else {
+		$ui->textbox(path=>"${lbsyncdir}/diff.keepalived");
+	    }
+
+	}
+    }
+}
+
+sub editFilesMenu
+{
+    my $path = shift;
+    my $choice = -1;
+    
+    while ($choice ne '0') {
+	$choice = $ui->fselect( path => $path );
+
+	if ($choice eq '0') {
+	    last;
+	}
+	system("$editor $choice");
+    }
+}
+
+sub configureShorewallMenu
+{
+    my $choice = -1;
+    while ($choice ne 'r' and $choice ne '0') {
+	$choice = $ui->menu( text => 'Votre choix:',
+			     list => [ 'd', 'Montrer les differences local/distant',
+				       's1', 'Synchroniser local ==> distant',
+				       's2', 'Synchroniser local <== distant',
+				       'ed', 'Editer conf',
+				       'rl', 'Relancer shorewall (local)',
+				       'rd', 'Relancer shorewall (distant)',
+				       'r', 'Retour',
+			     ]);
+	if ($choice eq 'ed') {
+	    &editFilesMenu($swdir);
+	} elsif ($choice eq 's2') {
+	    system("rsync -avc --delete $rhost:${swdir}/ ${swdir}/");
+	} elsif ($choice eq 's1') {
+	    system("rsync -avc --delete ${swdir}/ $rhost:${swdir}/");
+	} elsif ($choice eq 'rl') {
+	    system("sudo /sbin/shorewall safe-restart");
+	} elsif ($choice eq 'rd') {
+	    system("ssh $rhost sudo /sbin/shorewall safe-restart");
+	} elsif ($choice eq 'd') {
+	    rmtree("${lbsyncdir}/shorewall");
+	    mkpath("${lbsyncdir}/shorewall");
+	    system("rsync -av $rhost:${swdir}/ ${lbsyncdir}/shorewall/");
+	    system("diff -Nru ${swdir} ${lbsyncdir}/shorewall > ${lbsyncdir}/diff.shorewall");
+	    if ( ($? >> 8) == 0) {
+		$ui->msgbox(text=>'aucune différence trouvée');
+	    } else {
+		$ui->textbox(path=>"${lbsyncdir}/diff.shorewall");
+	    }
+	}
+    }
+}
+
+sub configureNginxMenu
+{
+    my $choice = -1;
+    while ($choice ne 'r' and $choice ne '0') {
+	$choice = $ui->menu( text => 'Votre choix:',
+			     list => [ 'd', 'Montrer les differences local/distant',
+				       's1', 'Synchroniser local ==> distant',
+				       's2', 'Synchroniser local <== distant',
+				       'ed', 'Editer conf',
+				       'ad', 'Activer/desactiver un proxy',
+				       'rl', 'Relancer nginx (local)',
+				       'rd', 'Relancer nginx (distant)',
+				       'r', 'Retour',
+			     ]);
+	if ($choice eq 'ed') {
+	    &editFilesMenu($nginxdir);
+	} elsif ($choice eq 'ad') {
+	    &activateNginxMenu;
+	} elsif ($choice eq 's2') {
+	    system("rsync -avc --delete $rhost:${nginxdir}/ ${nginxdir}/");
+	} elsif ($choice eq 's1') {
+	    system("rsync -avc --delete ${nginxdir}/ $rhost:${nginxdir}/");
+	} elsif ($choice eq 'rl') {
+	    system("sudo /usr/sbin/nginx -t > ${lbsynclog} 2>&1");
+	    if ( ($? >> 8) == 0) {
+		system("sudo /etc/init.d/nginx reload");
+		$ui->msgbox(title => "Info",
+			    text => "Config OK, nginx relancé.");	
+	    } else {
+		$ui->textbox(title => "Erreur",
+			     path=>$lbsynclog);	
+	    }
+	} elsif ($choice eq 'rd') {
+	    system("ssh $rhost sudo /usr/sbin/nginx -t > ${lbsynclog} 2>&1");
+	    if ( ($? >> 8) == 0) {
+		system("ssh $rhost sudo /etc/init.d/nginx reload");
+		$ui->msgbox(title => "Info",
+			    text => "Config OK, nginx relancé.");	
+	    } else {
+		$ui->textbox(title => "Erreur",
+			     path=>$lbsynclog);	
+	    }
+	} elsif ($choice eq 'd') {
+	    rmtree("${lbsyncdir}/nginx");
+	    mkpath("${lbsyncdir}/nginx");
+	    system("rsync -av $rhost:${nginxdir}/ ${lbsyncdir}/nginx/");
+	    system("diff -Nru ${nginxdir} ${lbsyncdir}/nginx > ${lbsyncdir}/diff.nginx 2>&1");
+	    if ( ($? >> 8) == 0) {
+		$ui->msgbox(text=>'aucune différence trouvée.');
+	    } else {
+		$ui->textbox(path=>"${lbsyncdir}/diff.nginx");
+	    }
+	}
+    }
+}
+
+sub activateNginxMenu
+{
+    my %esites;
+    
+    my $sitesdir = "${nginxdir}/sites-available";
+    opendir(DIR, $sitesdir) || 
+	$ui->msgbox(title => "Erreur",
+		    text => "can't opendir ${sitesdir}: $!");
+    
+    %esites = map { $_ => 0 } grep { -f "${sitesdir}/$_" } readdir(DIR);
+    closedir DIR;
+    
+    $sitesdir = "${nginxdir}/sites-enabled";
+    opendir(DIR, $sitesdir) || 
+	$ui->msgbox(title => "Erreur",
+		    text => "can't opendir ${sitesdir}: $!");
+    
+    map { $esites{$_} = 1 } grep { -l "${sitesdir}/$_" } readdir(DIR);
+    closedir DIR; 
+    
+    my @list = map {
+	($_, ['', $esites{$_}])
+    } sort keys %esites;
+    
+    my @choices = $ui->checklist( text => 'Proxies actifs:',
+				  list => \@list
+	);
+
+    if (scalar(@choices) == 1) {
+	return if ($choices[0] eq '0');
+    }
+    
+    #map { print "unlink ${nginxdir}/sites-enabled/$_\n" } keys %esites;
+    unlink map { "${nginxdir}/sites-enabled/$_" } keys %esites;
+    
+    #map { print "symlink ${nginxdir}/sites-enabled/$_\n" } @choices;
+    map { 
+	symlink "${nginxdir}/sites-available/$_", 
+	"${nginxdir}/sites-enabled/$_";
+    } @choices;
+}
+
+&mainMenu;
+
+exit 0;

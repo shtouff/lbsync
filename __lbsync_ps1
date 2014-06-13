@@ -1,0 +1,30 @@
+#!/bin/sh
+
+check_ospfd()
+{
+  pgrep ospfd >/dev/null 2>&1
+  return $?
+}
+
+check_keepalived()
+{
+  pgrep keepalived >/dev/null 2>&1
+  return $?
+}
+
+echo -ne ' ('
+
+if ! check_ospfd; then
+  echo -ne '\033[33mOSPF\033[0m'
+else
+  echo -ne '\033[32mOSPF\033[0m'
+fi
+
+if ! check_keepalived; then
+  echo -ne ' \033[33mVRRP\033[0m'
+else
+  echo -ne ' \033[32mVRRP\033[0m'
+fi
+
+echo -e ')'
+
